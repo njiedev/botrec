@@ -14,15 +14,18 @@ Each record is a varint length plus a protobuf usercmd, delta-encoded against th
 previous tick: only changed fields are present, and a bare key with wiretype 7 means
 "this field is now cleared". Wiretype 7 is not valid standard protobuf.
 
-Known fields (dotted paths into the record message):
-    1      base usercmd
-    1.2    tick number (+1 per record)
-    1.3.1  buttons held (bitmask, see BUTTONS)   1.3.2  buttons that changed this tick
-    1.4.1  view pitch (f32)                      1.4.2  view yaw (f32, turning right lowers it)
-    1.5    forward axis (f32, W=+1, S=-1)        1.6    side axis (f32, A=+1, D=-1)
+Records are CCitadelUserCmdPB messages (names from the game's protobuf schema):
+    1      base (CBaseUserCmdPB)
+    1.2    client_tick (+1 per record)
+    1.3.1  buttons_pb.buttonstate1: held (bitmask, see BUTTONS)
+    1.3.2  buttons_pb.buttonstate2: changed this tick (set on both press and release)
+    1.4.1  viewangles pitch (f32)                1.4.2  viewangles yaw (f32, turning right lowers it)
+    1.5    forwardmove (f32, W=+1, S=-1)         1.6    leftmove (f32, A=+1, D=-1)
            axes are fractional on the press and release ticks (sub-tick timing)
-    1.10   random seed
-    2.1-3  logged pawn position x/y/z (f32), ignored by playback
+    1.10   random_seed
+    1.14   pawn_entity_handle                    1.17   prediction_offset_ticks_x256
+    2.1-3  vec_camera_position (the third-person camera, not the pawn), ignored by playback
+    10     enemy_hero_aimed_at                   13     is_in_third_person_view
 """
 import base64
 import random
@@ -277,7 +280,7 @@ def rotate_start(payload, degrees):
 
 
 def strip_positions(payload):
-    """Remove the logged positions (field 2). Playback ignores them."""
+    """Remove the logged camera positions (field 2). Playback ignores them."""
     start, count, first, header_len, recs = split(payload)
     strip = lambda b: edit_field(b, [2], lambda wt, v: None)
     return join(start, count, strip(first), None, [strip(r) for r in recs])
@@ -305,8 +308,9 @@ def build(start, frames, template, first_tick=None, seed=0):
     start:    (x, y, z, pitch, yaw, roll) the bot is teleported to before playback.
     frames:   one dict per tick: {'buttons': bitmask, 'fwd': float, 'side': float,
               'pitch': float, 'yaw': float}. Missing keys mean 0; angles default to start.
-    template: payload of a game recording. Its first cmd supplies fields whose meaning
-              is unknown (1.14, 1.17, 13), so we copy what the game writes instead of guessing.
+    template: payload of a game recording. Its first cmd supplies pawn_entity_handle (1.14),
+              prediction_offset_ticks_x256 (1.17) and is_in_third_person_view (13), copied
+              as the game wrote them.
     """
     rng = random.Random(seed)
     _, _, tfirst, _, _ = split(template)
